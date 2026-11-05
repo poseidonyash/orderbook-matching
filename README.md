@@ -6,7 +6,7 @@ A single-instrument exchange in Python. It has three parts:
 2. A market of trading bots: noise traders, an informed trader, a market maker, and a spoofer.
 3. A streaming surveillance module that finds the spoofer from order and cancel patterns only.
 
-Status: Phase 1 (core matching engine) has not started.
+Status: Phase 1 (core matching engine) has not started. The full build plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Setup
 

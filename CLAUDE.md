@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-A portfolio project for a prediction-market company interview. It must show low-latency system design, trading knowledge, and AI-native work. The full build plan is at https://claude.ai/artifact/ALHXB9gXzC9oM2NncM43pB.
+A portfolio project for a prediction-market company interview. It must show low-latency system design, trading knowledge, and AI-native work. The full build plan is in `docs/PLAN.md`. Read the section for the current phase before you start work on it.
 
 ## Commands
 
