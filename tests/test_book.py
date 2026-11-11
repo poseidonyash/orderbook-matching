@@ -8,7 +8,8 @@ from obm.engine.types import OrderId, OrderType, Outcome, Price, Qty, Side, Trad
 
 
 def order(id: int, side: Side, price: int, qty: int) -> Order:
-    return Order(OrderId(id), TraderId(0), side, Price(price), Qty(qty))
+    # Each order belongs to its own trader, so no test self-trades by accident.
+    return Order(OrderId(id), TraderId(id), side, Price(price), Qty(qty))
 
 
 def queue(level: Level) -> list[int]:
@@ -108,7 +109,7 @@ def test_market_order_price_is_not_checked_against_the_range() -> None:
     book = OrderBook(Price(1), Price(99))
     book.submit(order(1, Side.SELL, 60, 1))
 
-    market = Order(OrderId(2), TraderId(0), Side.BUY, Price(0), Qty(1), OrderType.MARKET)
+    market = Order(OrderId(2), TraderId(2), Side.BUY, Price(0), Qty(1), OrderType.MARKET)
     result = book.submit(market)
 
     assert result.outcome == Outcome.FILLED

@@ -36,9 +36,11 @@ def order(
     price: int,
     qty: int,
     type: OrderType = OrderType.LIMIT,
-    trader: int = 0,
+    trader: int | None = None,
 ) -> Order:
-    return Order(OrderId(id), TraderId(trader), side, Price(price), Qty(qty), type)
+    # By default each order belongs to its own trader, so no test self-trades by accident.
+    owner = TraderId(id if trader is None else trader)
+    return Order(OrderId(id), owner, side, Price(price), Qty(qty), type)
 
 
 def trades(fills: list[Fill]) -> list[tuple[int, int, int, int]]:
@@ -276,3 +278,78 @@ def test_post_only_that_does_not_cross_rests(make_book: MakeBook) -> None:
 
     assert result == SubmitResult([], Outcome.RESTED)
     assert book.best_bid() == 51
+
+
+# Self-trade prevention: a trader's new order never trades with that trader's own resting
+# order. The engine cancels the resting order instead, and matching goes on.
+
+
+def test_self_trade_cancels_own_resting_order_then_trades_with_others(
+    make_book: MakeBook,
+) -> None:
+    # Trader 7 sells 10 at 52 (order 1). Trader 9 sells 5 at 52 behind it (order 2).
+    book = make_book()
+    book.submit(order(id=1, side=Side.SELL, price=52, qty=10, trader=7))
+    book.submit(order(id=2, side=Side.SELL, price=52, qty=5, trader=9))
+
+    # Trader 7 buys 8 at 52.
+    result = book.submit(order(id=3, side=Side.BUY, price=52, qty=8, trader=7))
+
+    assert result.self_trade_cancels == [1]
+    assert trades(result.fills) == [(2, 3, 52, 5)]
+    assert result.outcome == Outcome.RESTED  # 3 lots left, resting as a bid at 52.
+    assert (book.best_bid(), book.best_ask()) == (52, None)
+
+
+def test_self_trade_with_only_own_orders_trades_nothing(make_book: MakeBook) -> None:
+    book = make_book()
+    book.submit(order(id=1, side=Side.SELL, price=52, qty=10, trader=7))
+
+    result = book.submit(order(id=2, side=Side.BUY, price=52, qty=4, trader=7))
+
+    assert result == SubmitResult([], Outcome.RESTED, [OrderId(1)])
+    assert (book.best_bid(), book.best_ask()) == (52, None)
+
+
+def test_self_trade_cancels_own_orders_on_several_levels(make_book: MakeBook) -> None:
+    book = make_book()
+    book.submit(order(id=1, side=Side.BUY, price=50, qty=3, trader=7))
+    book.submit(order(id=2, side=Side.BUY, price=49, qty=3, trader=8))
+    book.submit(order(id=3, side=Side.BUY, price=48, qty=3, trader=7))
+
+    result = book.submit(order(id=4, side=Side.SELL, price=48, qty=10, trader=7))
+
+    assert result.self_trade_cancels == [1, 3]
+    assert trades(result.fills) == [(2, 4, 49, 3)]
+    assert (book.best_bid(), book.best_ask()) == (None, 48)  # 7 lots left rest at 48.
+
+
+def test_self_trade_cancelled_order_can_no_longer_be_cancelled(make_book: MakeBook) -> None:
+    book = make_book()
+    book.submit(order(id=1, side=Side.SELL, price=52, qty=10, trader=7))
+    book.submit(order(id=2, side=Side.BUY, price=52, qty=4, trader=7))
+
+    assert book.cancel(OrderId(1)) is False
+
+
+def test_market_order_self_trade_cancels_and_drops_the_rest(make_book: MakeBook) -> None:
+    book = make_book()
+    book.submit(order(id=1, side=Side.SELL, price=52, qty=10, trader=7))
+
+    market = order(id=2, side=Side.BUY, price=1, qty=4, type=OrderType.MARKET, trader=7)
+    result = book.submit(market)
+
+    assert result == SubmitResult([], Outcome.CANCELLED, [OrderId(1)])
+    assert (book.best_bid(), book.best_ask()) == (None, None)
+
+
+def test_post_only_against_own_order_is_rejected_and_keeps_it(make_book: MakeBook) -> None:
+    # Post-only never trades, so the usual post-only rule applies: reject, change nothing.
+    book = make_book()
+    book.submit(order(id=1, side=Side.SELL, price=52, qty=10, trader=7))
+
+    post = order(id=2, side=Side.BUY, price=52, qty=4, type=OrderType.POST_ONLY, trader=7)
+    result = book.submit(post)
+
+    assert result == SubmitResult([], Outcome.REJECTED)
+    assert book.best_ask() == 52
