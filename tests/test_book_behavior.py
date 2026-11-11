@@ -19,6 +19,7 @@ class Book(Protocol):
     def cancel(self, order_id: OrderId) -> bool: ...
     def best_bid(self) -> Price | None: ...
     def best_ask(self) -> Price | None: ...
+    def depth(self, side: Side) -> list[tuple[Price, Qty]]: ...
 
 
 MakeBook = Callable[[], Book]
@@ -353,3 +354,15 @@ def test_post_only_against_own_order_is_rejected_and_keeps_it(make_book: MakeBoo
 
     assert result == SubmitResult([], Outcome.REJECTED)
     assert book.best_ask() == 52
+
+
+def test_depth_lists_each_price_best_first(make_book: MakeBook) -> None:
+    book = make_book()
+    for i, (side, price, qty) in enumerate(
+        [(Side.BUY, 50, 3), (Side.BUY, 50, 2), (Side.BUY, 48, 1), (Side.SELL, 53, 4)],
+        start=1,
+    ):
+        book.submit(order(id=i, side=side, price=price, qty=qty))
+
+    assert book.depth(Side.BUY) == [(50, 5), (48, 1)]
+    assert book.depth(Side.SELL) == [(53, 4)]

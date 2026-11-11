@@ -113,3 +113,29 @@ def test_market_order_price_is_not_checked_against_the_range() -> None:
     result = book.submit(market)
 
     assert result.outcome == Outcome.FILLED
+
+
+def test_check_invariants_passes_on_a_normal_book() -> None:
+    book = OrderBook(Price(1), Price(99))
+    book.submit(order(1, Side.BUY, 50, 3))
+    book.submit(order(2, Side.SELL, 52, 3))
+
+    book.check_invariants()
+
+
+def test_check_invariants_catches_a_wrong_level_total() -> None:
+    book = OrderBook(Price(1), Price(99))
+    book.submit(order(1, Side.BUY, 50, 3))
+    book._bids[50].qty = 99  # Corrupt the book on purpose.
+
+    with pytest.raises(AssertionError, match="level total"):
+        book.check_invariants()
+
+
+def test_check_invariants_catches_a_stale_best_price() -> None:
+    book = OrderBook(Price(1), Price(99))
+    book.submit(order(1, Side.SELL, 52, 3))
+    book._best_ask = 60  # Corrupt the book on purpose.
+
+    with pytest.raises(AssertionError, match="stale best ask"):
+        book.check_invariants()

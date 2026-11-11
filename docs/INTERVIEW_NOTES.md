@@ -166,3 +166,39 @@ Interview questions:
 
 - Question: How does STP fit into the matching loop?
   Answer: After the loop picks the maker, it compares the maker's trader with the incoming order's trader. If they are the same, there is no fill, and the maker is removed exactly like a fully filled maker. Then the loop goes on to the next order. The rest of the loop does not change.
+
+## 5. Property-based tests
+
+What it does: a Hypothesis state machine in `tests/test_book_properties.py` builds sequences of submits and cancels. It runs each sequence on the fast book and the baseline side by side, and it checks a set of rules after every step. It replaces the earlier random-seed differential test.
+
+Key concept: a property-based test states a rule that must be true for every input, instead of one hand-written example. A tool, here Hypothesis, searches for an input that breaks the rule. Two features make it stronger than plain random tests. It tries edge cases on purpose, such as the top and bottom tick, a quantity of 1, or a cancel of an order that just filled. When it finds a failure, it shrinks it to the shortest input that still fails. Stateful testing applies this to systems with actions, like an order book: Hypothesis builds sequences of actions and checks the rules after each one.
+
+The rules (invariants) checked after every step:
+
+| Rule | Why it must hold |
+| --- | --- |
+| Both books give the same results and the same depth | The baseline is the reference. |
+| The fast book's structures are consistent: links, level totals, id map, best prices | Fast code keeps the same facts in several places, and they must agree. |
+| Best bid is below best ask | If they meet, those orders trade at once. A crossed book is a bug. |
+| No quantity appears or disappears | Each order's sent quantity equals filled, plus resting, plus cancelled. |
+| Each fill is at the maker's price and inside the taker's limit | Price-time priority and the limit rule. |
+| No fill has the same trader on both sides | Self-trade prevention. |
+
+Decisions:
+
+| Decision | Choice | Why | What I gave up |
+| --- | --- | --- | --- |
+| Test style | Stateful `RuleBasedStateMachine` with submit and cancel rules | Matches how a book runs, checks every rule after every step, and shrinks to the shortest failing sequence. | Harder to read than a simple list of operations. |
+| How tests see inside the books | Public `depth(side)` on both books, and `check_invariants()` on the fast book, for tests only | `depth` is the market data snapshot that a later feature needs. Tests do not depend on private fields. | `check_invariants` visits every tick, so it is far too slow for the matching path. |
+| Old random differential test | Deleted | The state machine compares both books at every step and adds shrinking. | Nothing: it tested the same thing. |
+| An independent record of every order | The test tracks sent, filled, cancelled and resting for each order | Two books that share a bug agree with each other. The record catches that case. | More test code. |
+
+Testing note: with a planted bug (a fill that does not lower its level's total), Hypothesis failed and shrank the problem to two or three orders. `check_invariants` named the fault: `level total 1 != 0`.
+
+Interview questions:
+
+- Question: Why is a failing sequence of 3 orders more useful than one of 287 steps?
+  Answer: With 3 orders, I can work out by hand what the book must do and see where it went wrong, in a minute. With 287 steps, most of them have nothing to do with the bug, and I must find the important few myself. Hypothesis shrinking does that search for me: it removes steps and simplifies values while the failure stays.
+
+- Question: Why does the test keep its own record of each order, when it can compare the two books?
+  Answer: Comparison only proves that the two books agree. If both have the same bug, they agree and the test passes. The record does not depend on either book: it adds up fills and cancels from the results and checks that every lot is accounted for. That is a third, independent view.
