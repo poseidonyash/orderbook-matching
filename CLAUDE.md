@@ -2,6 +2,21 @@
 
 A portfolio project for a prediction-market company interview. It must show low-latency system design, trading knowledge, and AI-native work. The full build plan is in `docs/PLAN.md`. Read the section for the current phase before you start work on it.
 
+## How we work
+
+The owner is building this project to learn it well enough to explain every part in an interview. Follow this loop for every feature:
+
+1. Branch. One feature per branch, named `phaseN/<feature>`, and one pull request per feature.
+2. Teach first. Explain the concept the feature needs in plain words, with a small worked example in numbers.
+3. Design questions. Ask the owner the design questions that matter, each with the options, the trade-off, and a recommendation. Wait for answers before writing code.
+4. Build. Write the code and tests. Keep the diff small enough to read in one sitting.
+5. Walkthrough. Explain the finished code in reading order: which part does what, and why.
+6. Explain-back check. Ask two or three interview-style questions about the feature. The owner answers in their own words. Correct anything wrong or vague.
+7. Notes. Add the feature's entry to `docs/INTERVIEW_NOTES.md`: the concept, the decisions and their reasons, the trade-offs, and the interview questions with the owner's corrected answers.
+8. Pull request. The description lists the design decisions and their reasons. The owner reviews and merges.
+
+Do not add Claude attribution lines to commits or pull requests.
+
 ## Commands
 
 - `uv sync`: install the environment.

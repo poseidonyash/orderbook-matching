@@ -1,74 +1,88 @@
-from obm.engine.types import Price, Side, Qty
-from sortedcontainers import SortedDict 
-from dataclasses import dataclass
+"""Baseline order book: simple and correct, not fast.
+
+Each side of the book is a SortedDict from price to a deque of orders, oldest first. The
+fast engine in obm.engine is benchmarked against this book and must give the same fills.
+"""
+
 from collections import deque
 
-@dataclass
-class Order:
-    id: int
-    trader : int
-    side: Side
-    price: int
-    qty : int
+from sortedcontainers import SortedDict
 
-@dataclass(frozen=True)
-class Fill:
-    maker_id: int
-    taker_id: int
-    price: int
-    qty: int
+from obm.engine.orders import Fill, Order
+from obm.engine.types import OrderId, Price, Qty, Side
+
 
 class SortedBook:
     def __init__(self) -> None:
-        self.bids = SortedDict()
-        self.asks = SortedDict()
+        self.bids: SortedDict[Price, deque[Order]] = SortedDict()
+        self.asks: SortedDict[Price, deque[Order]] = SortedDict()
+        self._orders: dict[OrderId, Order] = {}  # Resting orders, for cancel by id.
+
     def best_bid(self) -> Price | None:
         if not self.bids:
             return None
-        else:
-            return self.bids.peekitem(-1)[0]
+        price: Price = self.bids.peekitem(-1)[0]
+        return price
+
     def best_ask(self) -> Price | None:
         if not self.asks:
             return None
-        else:
-            return self.asks.peekitem(0)[0]
-    
-    def _rest(self, order: Order) -> None:
-        book_side = self.bids if order.side == Side.BUY else self.asks
-        book_side.setdefault(order.price, deque()).append(order)
+        price: Price = self.asks.peekitem(0)[0]
+        return price
 
     def submit(self, order: Order) -> list[Fill]:
-        fills = []
-        if order.side == Side.SELL:
-            self._rest(order)
-            return fills
-        while order.qty and self.best_ask() and self.best_ask() <= order.price:
-        # While the order still has qty left AND there are asks
-        # AND the best ask price is at or below order.price:
-            price = self.best_ask()
-            level = self.asks[price]
-            maker = level[0]
-        #     3. The fill quantity is the smaller of the two quantities.
-        #     4. Append a Fill(maker id, taker id, the MAKER's price, fill qty).
-        #     5. Subtract the fill quantity from BOTH orders.
-        #     6. If the maker has 0 left, remove it from the deque.
-        #     7. If the deque is now empty, delete that price from self.asks.
-        # After the loop: if the order still has qty left, rest it.
+        """Match a limit order against the other side, then rest any remainder."""
+        fills: list[Fill] = []
+
+        # A buy trades against the asks, cheapest first. A sell trades against the
+        # bids, highest first. Everything else in the loop is the same for both.
+        if order.side == Side.BUY:
+            opposite, best = self.asks, self.best_ask
+        else:
+            opposite, best = self.bids, self.best_bid
+
+        while order.qty > 0:
+            price = best()
+            if price is None or not self._crosses(order, price):
+                break
+            level = opposite[price]
+            maker = level[0]  # Oldest order at the best price: time priority.
+
             fill_qty = Qty(min(order.qty, maker.qty))
-
             fills.append(Fill(maker.id, order.id, price, fill_qty))
-
             order.qty = Qty(order.qty - fill_qty)
             maker.qty = Qty(maker.qty - fill_qty)
 
             if maker.qty == 0:
                 level.popleft()
-
+                del self._orders[maker.id]
             if not level:
-                del self.asks[price]
+                del opposite[price]
 
         if order.qty > 0:
             self._rest(order)
-
         return fills
 
+    def cancel(self, order_id: OrderId) -> bool:
+        """Remove a resting order. Returns False if no resting order has this id."""
+        order = self._orders.pop(order_id, None)
+        if order is None:
+            return False
+        book_side = self.bids if order.side == Side.BUY else self.asks
+        level = book_side[order.price]
+        level.remove(order)  # O(n) in the orders at this price: the fast engine fixes this.
+        if not level:
+            del book_side[order.price]
+        return True
+
+    @staticmethod
+    def _crosses(order: Order, best_opposite: Price) -> bool:
+        # A buyer accepts any ask at or below its limit. A seller accepts any bid at or above.
+        if order.side == Side.BUY:
+            return best_opposite <= order.price
+        return best_opposite >= order.price
+
+    def _rest(self, order: Order) -> None:
+        book_side = self.bids if order.side == Side.BUY else self.asks
+        book_side.setdefault(order.price, deque()).append(order)
+        self._orders[order.id] = order
