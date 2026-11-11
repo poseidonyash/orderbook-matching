@@ -40,16 +40,16 @@ Decisions:
 | Where `Order` and `Fill` live | `src/obm/engine/orders.py`, shared by both engines | Both engines must produce the same `Fill` objects so that their outputs can be compared. The engine must not import from `bench/`. | The baseline is no longer one self-contained file. |
 | Data structure | `SortedDict` of price to `deque` of orders | Simple and clearly correct. Sorted keys give the best price, and the deque keeps time order. | Speed. Looking up a level costs O(log n) in the number of price levels. |
 | Cancel | A `dict` from order id to order, then `deque.remove` | The benchmark sends about 35% cancels, so the baseline needs cancel for a fair comparison. | Cancel costs O(n) in the orders at that price. The fast engine fixes this. |
-| `Order` equality | `eq=False`: equal only if it is the same object | Two different orders can have the same fields. They are still different orders. | Nothing in practice. |
-| `Fill` | `frozen=True` | A fill records a trade that already happened, so nothing may change it. | Nothing in practice. |
+| `Order` equality | `eq=False`: each order equals only itself | Two different orders can have the same fields. They are still different orders. | Nothing in practice. |
+| `Fill` | `frozen=True` | A fill records a trade that already happened, so no code can change it. | Nothing in practice. |
 
 Interview questions:
 
 - Question: A buyer bids up to 60, and the only seller asks 52. At what price do they trade, and why?
-  Answer: At 52, the resting seller's price. The trade always happens at the maker's price. The seller was in the book first and offered 52. The buyer's 60 is only a limit: the most the buyer agrees to pay. The buyer pays less if the book offers less. This rule holds even when more asks exist: each fill uses the price of the order it trades against.
+  Answer: At 52, the resting seller's price. The trade always happens at the maker's price. The seller was in the book first and offered 52. The buyer's 60 is only a limit: the most the buyer agrees to pay. When the book offers a lower price, the buyer pays that lower price. When more asks exist, the same rule holds: each fill uses the price of the order it trades against.
 
 - Question: How does the time for `cancel` grow with the number of orders at one price, and why?
-  Answer: It grows linearly, O(n), not exponentially. A deque is O(1) only at its two ends: adding at the back and removing from the front. To remove an order from the middle, `deque.remove` must walk from the front and compare each order until it finds the right one. With 1,000 orders at a price, a cancel can check up to 1,000 orders. The fast engine stores links to the previous and next order on each order (a doubly linked list), and finds the order through the id dictionary. Then it removes the order by changing two links, in the same time whatever the queue length.
+  Answer: It grows linearly, O(n), not exponentially. A deque is O(1) only at its two ends: adding at the back and removing from the front. To remove an order from the middle, `deque.remove` must walk from the front and compare each order until it finds the right one. With 1,000 orders at a price, a cancel can check up to 1,000 orders. The fast engine keeps a doubly linked list: each order stores links to the order before it and the order after it. The engine finds the order through the id dictionary. Then it removes the order by changing two links, in the same time for any queue length.
 
 - Question: Why can an `Order` change, while a `Fill` is frozen?
-  Answer: An order's remaining quantity goes down each time it partly fills, so the engine must change it in place. A fill is a record of a trade that already happened. Nothing may change it afterward, and freezing it makes Python raise an error if code tries.
+  Answer: An order's remaining quantity goes down each time it partly fills, so the engine must change it in place. A fill is a record of a trade that already happened. No code can change it afterward. The class is frozen, so an attempt to change a field raises an error.
