@@ -12,7 +12,7 @@ from bench.baselines.sorted_book import SortedBook
 
 from obm.engine.book import OrderBook
 from obm.engine.orders import Order
-from obm.engine.types import OrderId, Price, Qty, Side, TraderId
+from obm.engine.types import OrderId, OrderType, Price, Qty, Side, TraderId
 
 
 @pytest.mark.parametrize("seed", range(50))
@@ -32,11 +32,13 @@ def test_random_stream_gives_identical_results(seed: int) -> None:
             side = rng.choice([Side.BUY, Side.SELL])
             price = Price(rng.randint(45, 55))  # A narrow range, so orders cross often.
             qty = Qty(rng.randint(1, 10))
+            # Mostly limit orders, so the book fills up, plus some of each other type.
+            kind = rng.choices(list(OrderType), weights=[70, 10, 10, 10])[0]
             submitted.append(oid)
             # Each book gets its own Order object, because books change the quantity.
-            fast_fills = fast.submit(Order(oid, TraderId(0), side, price, qty))
-            base_fills = base.submit(Order(oid, TraderId(0), side, price, qty))
-            assert fast_fills == base_fills, f"step {step}: order {oid}"
+            fast_result = fast.submit(Order(oid, TraderId(0), side, price, qty, kind))
+            base_result = base.submit(Order(oid, TraderId(0), side, price, qty, kind))
+            assert fast_result == base_result, f"step {step}: order {oid} ({kind.name})"
 
         assert fast.best_bid() == base.best_bid(), f"step {step}: best bid"
         assert fast.best_ask() == base.best_ask(), f"step {step}: best ask"

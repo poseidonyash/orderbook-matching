@@ -4,7 +4,7 @@ import pytest
 
 from obm.engine.book import Level, OrderBook
 from obm.engine.orders import Order
-from obm.engine.types import OrderId, Price, Qty, Side, TraderId
+from obm.engine.types import OrderId, OrderType, Outcome, Price, Qty, Side, TraderId
 
 
 def order(id: int, side: Side, price: int, qty: int) -> Order:
@@ -101,3 +101,14 @@ def test_duplicate_resting_order_id_is_rejected() -> None:
     book.submit(order(1, Side.BUY, 50, 1))
     with pytest.raises(ValueError, match="already resting"):
         book.submit(order(1, Side.BUY, 49, 1))
+
+
+def test_market_order_price_is_not_checked_against_the_range() -> None:
+    # A market order has no price, so a price outside the range is not an error.
+    book = OrderBook(Price(1), Price(99))
+    book.submit(order(1, Side.SELL, 60, 1))
+
+    market = Order(OrderId(2), TraderId(0), Side.BUY, Price(0), Qty(1), OrderType.MARKET)
+    result = book.submit(market)
+
+    assert result.outcome == Outcome.FILLED

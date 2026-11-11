@@ -6,7 +6,7 @@ outputs can be compared directly in the reference tests.
 
 from dataclasses import dataclass, field
 
-from obm.engine.types import OrderId, Price, Qty, Side, TraderId
+from obm.engine.types import OrderId, OrderType, Outcome, Price, Qty, Side, TraderId
 
 
 # eq=False: two orders are the same only if they are the same object. Field-by-field
@@ -18,6 +18,7 @@ class Order:
     side: Side
     price: Price
     qty: Qty  # Remaining quantity. It goes down as the order fills.
+    type: OrderType = OrderType.LIMIT  # A MARKET order's price is ignored.
 
     # Links to the neighbours in the queue at this price (an intrusive doubly linked
     # list). Only the fast book in obm.engine.book uses them. The baseline ignores them.
@@ -32,3 +33,11 @@ class Fill:
     taker_id: OrderId  # The incoming order that caused the trade.
     price: Price  # Always the maker's price.
     qty: Qty
+
+
+@dataclass(slots=True, frozen=True)
+class SubmitResult:
+    """What submit() did with one order: the trades it made, and what happened after."""
+
+    fills: list[Fill]
+    outcome: Outcome
