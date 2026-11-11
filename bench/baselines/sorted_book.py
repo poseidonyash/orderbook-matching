@@ -8,8 +8,8 @@ from collections import deque
 
 from sortedcontainers import SortedDict
 
-from obm.engine.orders import Fill, Order
-from obm.engine.types import OrderId, Price, Qty, Side
+from obm.engine.orders import Fill, Order, SubmitResult
+from obm.engine.types import OrderId, OrderType, Outcome, Price, Qty, Side
 
 
 class SortedBook:
@@ -30,8 +30,8 @@ class SortedBook:
         price: Price = self.asks.peekitem(0)[0]
         return price
 
-    def submit(self, order: Order) -> list[Fill]:
-        """Match a limit order against the other side, then rest any remainder."""
+    def submit(self, order: Order) -> SubmitResult:
+        """Match an order against the other side, then decide what happens to the rest."""
         fills: list[Fill] = []
 
         # A buy trades against the asks, cheapest first. A sell trades against the
@@ -41,9 +41,19 @@ class SortedBook:
         else:
             opposite, best = self.bids, self.best_bid
 
+        if order.type == OrderType.POST_ONLY:
+            price = best()
+            if price is not None and self._crosses(order, price):
+                return SubmitResult(fills, Outcome.REJECTED)
+            self._rest(order)
+            return SubmitResult(fills, Outcome.RESTED)
+
         while order.qty > 0:
             price = best()
-            if price is None or not self._crosses(order, price):
+            if price is None:
+                break
+            # A market order has no limit, so it accepts any price.
+            if order.type != OrderType.MARKET and not self._crosses(order, price):
                 break
             level = opposite[price]
             maker = level[0]  # Oldest order at the best price: time priority.
@@ -59,9 +69,12 @@ class SortedBook:
             if not level:
                 del opposite[price]
 
-        if order.qty > 0:
+        if order.qty == 0:
+            return SubmitResult(fills, Outcome.FILLED)
+        if order.type == OrderType.LIMIT:
             self._rest(order)
-        return fills
+            return SubmitResult(fills, Outcome.RESTED)
+        return SubmitResult(fills, Outcome.CANCELLED)  # MARKET or IOC: drop the remainder.
 
     def cancel(self, order_id: OrderId) -> bool:
         """Remove a resting order. Returns False if no resting order has this id."""

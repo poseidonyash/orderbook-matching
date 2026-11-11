@@ -86,3 +86,44 @@ Interview questions:
 
 - Question: The differential test has no hand-written expected fills. How can it prove anything?
   Answer: It uses the baseline as the expected answer. The baseline is simple enough to check by reading, and the behaviour tests check it with hand-written cases. If the fast book gives the same fills and best prices after each step of 20,000 random steps, it follows the same rules, including in cases that nobody thought to write. Its limit: a bug that both books share passes the test, which is why the hand-written tests also run on both books.
+
+## 3. Order types
+
+What it does: both books accept four order types: limit, market, IOC (immediate-or-cancel) and post-only. `submit` now returns a `SubmitResult` with the fills and an `Outcome`: `RESTED`, `FILLED`, `CANCELLED` or `REJECTED`.
+
+Key concept: an order type changes only two things. One is the limit price for matching. The other is what happens to the remainder. The matching loop is the same for every type.
+
+| Type | Limit for matching | Remainder | Who uses it |
+| --- | --- | --- | --- |
+| Limit | The order's price | Rests in the book | Most orders |
+| Market | None: the far edge of the range | Cancelled | Traders who care about speed more than price |
+| IOC | The order's price | Cancelled | Traders who want to take liquidity without leaving a visible order |
+| Post-only | Never matches | Rests. The order is rejected instead if it can trade on arrival. | Market makers, who want maker rebates instead of taker fees |
+
+Worked example: the book holds asks of 10 at 52 and 5 at 53.
+
+- Market buy of 20: trades 10 at 52 and 5 at 53. The last 5 lots are cancelled.
+- IOC buy of 12 at 52: trades 10 at 52. The last 2 lots are cancelled. As a limit order, those 2 lots rest as a bid at 52.
+- Post-only buy at 52: rejected, because it can trade against the ask at 52. At 51, it rests.
+
+Decisions:
+
+| Decision | Choice | Why | What I gave up |
+| --- | --- | --- | --- |
+| How an order carries its type | A `type` field on `Order`, default `LIMIT` | Existing calls keep working, and the event log can record the type with the order. | `Order` gets one more field. |
+| Market order price | Ignored. The engine uses the edge of the range as the limit. | The matching loop needs no special case. | No price protection: a large market order in a thin book trades at bad prices. Real exchanges add a price band. This is a stretch goal. |
+| How submit reports results | `SubmitResult(fills, outcome)` | The caller can tell a rested remainder from a cancelled one, and a rejected order is a normal result, not an error. | Callers changed from a list of fills to a result object. The Phase 2 event log replaces it with full events. |
+| Baseline | Gets the same four types | The differential test then covers the types too. | A little more code in the baseline. |
+
+Testing note: to make sure that the differential test works, I planted a bug in the fast book: an IOC remainder that rested like a limit order. The differential test failed and caught it.
+
+Interview questions:
+
+- Question: The book holds asks of 10 at 52 and 5 at 53. A market buy for 20 arrives. What happens?
+  Answer: It trades 10 at 52, then 5 at 53. No asks are left, and 5 lots remain. They are cancelled, not rested. To rest, an order needs a price to wait at, and a market order has no price. It means "give me what is available now". The engine reports `CANCELLED`.
+
+- Question: Why is a rejected post-only order an outcome, while an out-of-range price raises an error?
+  Answer: An out-of-range price is a caller mistake: the engine cannot use that order at all, so it raises an error. A post-only order that can trade is a valid order. Post-only means "add me to the book only as a maker". The engine followed that instruction, and the trader's program reads the result and reacts. An error is for something that must never happen. An outcome is for something that happens every day.
+
+- Question: How does the engine handle a market order without changing the matching loop?
+  Answer: The loop trades while the best ask is at or below a limit. For a market buy, the engine sets the limit to the highest tick in the range, so every ask passes. All the type-specific work happens outside the loop: the engine picks the limit before the loop and decides the fate of the remainder after it.

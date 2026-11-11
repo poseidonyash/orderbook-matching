@@ -11,8 +11,8 @@ every common operation takes the same time whatever the size of the book:
                   to the next price that has orders.
 """
 
-from obm.engine.orders import Fill, Order
-from obm.engine.types import MAX_TICK, MIN_TICK, OrderId, Price, Qty, Side
+from obm.engine.orders import Fill, Order, SubmitResult
+from obm.engine.types import MAX_TICK, MIN_TICK, OrderId, OrderType, Outcome, Price, Qty, Side
 
 
 class Level:
@@ -70,23 +70,45 @@ class OrderBook:
     def best_ask(self) -> Price | None:
         return Price(self._best_ask) if self._best_ask <= self.max_tick else None
 
-    def submit(self, order: Order) -> list[Fill]:
-        """Match a limit order against the other side, then rest any remainder."""
-        if not self.min_tick <= order.price <= self.max_tick:
+    def submit(self, order: Order) -> SubmitResult:
+        """Match an order against the other side, then decide what happens to the rest.
+
+        The order type changes only two things: the limit price used for matching, and
+        what happens to the remainder. The matching loops are the same for every type.
+        """
+        is_market = order.type == OrderType.MARKET
+        if not is_market and not self.min_tick <= order.price <= self.max_tick:
             raise ValueError(f"price {order.price} outside {self.min_tick}..{self.max_tick}")
         if order.qty <= 0:
             raise ValueError(f"quantity must be positive, got {order.qty}")
         if order.id in self._orders:
             raise ValueError(f"order id {order.id} is already resting")
 
+        is_buy = order.side == Side.BUY
         fills: list[Fill] = []
-        if order.side == Side.BUY:
-            self._take_asks(order, fills)
-        else:
-            self._take_bids(order, fills)
-        if order.qty > 0:
+
+        if order.type == OrderType.POST_ONLY:
+            crosses = self._best_ask <= order.price if is_buy else self._best_bid >= order.price
+            if crosses:
+                return SubmitResult(fills, Outcome.REJECTED)
             self._rest(order)
-        return fills
+            return SubmitResult(fills, Outcome.RESTED)
+
+        # A market order has no limit: use the far edge of the range, so it can trade at
+        # any price in the book.
+        if is_buy:
+            limit = self.max_tick if is_market else order.price
+            self._take_asks(order, limit, fills)
+        else:
+            limit = self.min_tick if is_market else order.price
+            self._take_bids(order, limit, fills)
+
+        if order.qty == 0:
+            return SubmitResult(fills, Outcome.FILLED)
+        if order.type == OrderType.LIMIT:
+            self._rest(order)
+            return SubmitResult(fills, Outcome.RESTED)
+        return SubmitResult(fills, Outcome.CANCELLED)  # MARKET or IOC: drop the remainder.
 
     def cancel(self, order_id: OrderId) -> bool:
         """Remove a resting order. Returns False if no resting order has this id."""
@@ -105,9 +127,9 @@ class OrderBook:
                 self._best_ask = self._next_ask_from(order.price + 1)
         return True
 
-    def _take_asks(self, order: Order, fills: list[Fill]) -> None:
-        # A buy order: take the lowest asks first, while they are at or below its limit.
-        while order.qty > 0 and self._best_ask <= order.price:
+    def _take_asks(self, order: Order, limit: int, fills: list[Fill]) -> None:
+        # A buy order: take the lowest asks first, while they are at or below the limit.
+        while order.qty > 0 and self._best_ask <= limit:
             price = self._best_ask
             level = self._asks[price]
             maker = level.head
@@ -125,9 +147,9 @@ class OrderBook:
                 if level.head is None:
                     self._best_ask = self._next_ask_from(price + 1)
 
-    def _take_bids(self, order: Order, fills: list[Fill]) -> None:
-        # A sell order: the mirror of _take_asks. Highest bids first, at or above its limit.
-        while order.qty > 0 and self._best_bid >= order.price:
+    def _take_bids(self, order: Order, limit: int, fills: list[Fill]) -> None:
+        # A sell order: the mirror of _take_asks. Highest bids first, at or above the limit.
+        while order.qty > 0 and self._best_bid >= limit:
             price = self._best_bid
             level = self._bids[price]
             maker = level.head
