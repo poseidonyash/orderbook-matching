@@ -33,6 +33,7 @@ default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff]
@@ -45,6 +46,11 @@ select = ["E", "F", "I", "B", "UP", "SIM", "PERF", "RUF"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+files = ["src", "tests", "bench"]
 strict = true
 warn_unreachable = true
+
+# sortedcontainers ships no type hints. It is used only by the baseline in bench/.
+[[tool.mypy.overrides]]
+module = ["sortedcontainers"]
+ignore_missing_imports = true
