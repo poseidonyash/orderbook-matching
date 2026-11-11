@@ -4,7 +4,7 @@ Both the baseline book in bench/baselines and the fast engine use these classes,
 outputs can be compared directly in the reference tests.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from obm.engine.types import OrderId, Price, Qty, Side, TraderId
 
@@ -18,6 +18,11 @@ class Order:
     side: Side
     price: Price
     qty: Qty  # Remaining quantity. It goes down as the order fills.
+
+    # Links to the neighbours in the queue at this price (an intrusive doubly linked
+    # list). Only the fast book in obm.engine.book uses them. The baseline ignores them.
+    prev: "Order | None" = field(default=None, repr=False)
+    next: "Order | None" = field(default=None, repr=False)
 
 
 # frozen=True: a fill is a record of a trade that already happened, so it never changes.
