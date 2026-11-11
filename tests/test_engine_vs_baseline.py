@@ -34,10 +34,11 @@ def test_random_stream_gives_identical_results(seed: int) -> None:
             qty = Qty(rng.randint(1, 10))
             # Mostly limit orders, so the book fills up, plus some of each other type.
             kind = rng.choices(list(OrderType), weights=[70, 10, 10, 10])[0]
+            trader = TraderId(rng.randint(1, 5))  # Few traders, so self-trades happen often.
             submitted.append(oid)
             # Each book gets its own Order object, because books change the quantity.
-            fast_result = fast.submit(Order(oid, TraderId(0), side, price, qty, kind))
-            base_result = base.submit(Order(oid, TraderId(0), side, price, qty, kind))
+            fast_result = fast.submit(Order(oid, trader, side, price, qty, kind))
+            base_result = base.submit(Order(oid, trader, side, price, qty, kind))
             assert fast_result == base_result, f"step {step}: order {oid} ({kind.name})"
 
         assert fast.best_bid() == base.best_bid(), f"step {step}: best bid"

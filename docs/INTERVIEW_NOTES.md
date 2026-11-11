@@ -127,3 +127,42 @@ Interview questions:
 
 - Question: How does the engine handle a market order without changing the matching loop?
   Answer: The loop trades while the best ask is at or below a limit. For a market buy, the engine sets the limit to the highest tick in the range, so every ask passes. All the type-specific work happens outside the loop: the engine picks the limit before the loop and decides the fate of the remainder after it.
+
+## 4. Self-trade prevention
+
+What it does: a trader's incoming order never trades with that same trader's resting order. The engine cancels the resting order instead, and matching goes on with the next order in the queue. `SubmitResult.self_trade_cancels` lists the cancelled ids.
+
+Key concept: a self-trade (on purpose, a wash trade) prints a trade where no money changes hands. It makes the market look busier than it is and can move the last traded price. Regulators ban wash trades. It also happens by accident, for example when a market maker's quotes move fast and its new buy crosses its own sell. Exchanges call the protection STP (self-trade prevention).
+
+Worked example: trader 7 rests a sell of 10 at 52 (order 1). Trader 9 rests a sell of 5 at 52 behind it (order 2). Trader 7 sends a buy of 8 at 52 (order 3). The engine cancels order 1 with no trade. Order 3 then trades 5 at 52 with order 2. The last 3 lots of order 3 rest as a bid at 52.
+
+STP methods on real exchanges:
+
+| Method | What happens | In this project |
+| --- | --- | --- |
+| Cancel resting | The old order goes, and the new order keeps matching | Yes |
+| Cancel incoming | The new order stops, and the old order stays | No |
+| Cancel both | Both orders go | No |
+| Decrement | Both orders shrink by the overlap, and nothing trades | No |
+
+Decisions:
+
+| Decision | Choice | Why | What I gave up |
+| --- | --- | --- | --- |
+| STP method | Cancel resting, one rule for the whole engine | The newest order shows what the trader wants now. In the loop, it is the same as removing a filled maker. | Traders cannot choose a method for each order. A field on `Order` can add that later. |
+| How the trader learns of the cancel | `self_trade_cancels` on `SubmitResult` | Without it, the trader's program still believes that the order rests. The Phase 2 event log turns these into `Cancelled` events. | One more field on the result. |
+| Post-only against an own order | Rejected, like any post-only order that crosses | Post-only never enters the matching loop, so one rule covers both cases. | Nothing. |
+| Trader ids in tests | Each test order is its own trader by default. The differential test uses 5 traders. | No test self-trades by accident, and the random test hits self-trades often. | Tests that want a self-trade must name the trader. |
+
+Testing note: with STP turned off in the fast book only, the differential test failed, so it guards this rule.
+
+Interview questions:
+
+- Question: Trader 7 rests a sell of 10 at 52, and trader 9 rests a sell of 5 at 52 behind it. Trader 7 sends a buy of 8 at 52. What happens to each order?
+  Answer: Trader 7's resting sell is cancelled without a trade, because it belongs to the same trader. The buy goes on and trades 5 at 52 with trader 9, whose order is then complete. The buy has 3 lots left, and as a limit order they rest as a bid at 52. The result lists the cancelled order in `self_trade_cancels`.
+
+- Question: Why stop a trader from trading with themself, when no money changes hands?
+  Answer: The trade still counts in the market data. It shows volume that is not real and can move the last price, which misleads other traders. Done on purpose, it is a wash trade, which regulators ban. By accident, it costs the trader fees for nothing. Stopping it in the engine protects the market data and the trader.
+
+- Question: How does STP fit into the matching loop?
+  Answer: After the loop picks the maker, it compares the maker's trader with the incoming order's trader. If they are the same, there is no fill, and the maker is removed exactly like a fully filled maker. Then the loop goes on to the next order. The rest of the loop does not change.

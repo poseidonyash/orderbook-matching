@@ -41,3 +41,5 @@ class SubmitResult:
 
     fills: list[Fill]
     outcome: Outcome
+    # Resting orders of the same trader that self-trade prevention cancelled, oldest first.
+    self_trade_cancels: list[OrderId] = field(default_factory=list)

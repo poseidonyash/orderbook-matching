@@ -33,6 +33,7 @@ class SortedBook:
     def submit(self, order: Order) -> SubmitResult:
         """Match an order against the other side, then decide what happens to the rest."""
         fills: list[Fill] = []
+        cancels: list[OrderId] = []  # Own resting orders removed by self-trade prevention.
 
         # A buy trades against the asks, cheapest first. A sell trades against the
         # bids, highest first. Everything else in the loop is the same for both.
@@ -58,23 +59,29 @@ class SortedBook:
             level = opposite[price]
             maker = level[0]  # Oldest order at the best price: time priority.
 
-            fill_qty = Qty(min(order.qty, maker.qty))
-            fills.append(Fill(maker.id, order.id, price, fill_qty))
-            order.qty = Qty(order.qty - fill_qty)
-            maker.qty = Qty(maker.qty - fill_qty)
+            if maker.trader == order.trader:
+                # Self-trade prevention: cancel the trader's own resting order, no trade.
+                cancels.append(maker.id)
+                maker_done = True
+            else:
+                fill_qty = Qty(min(order.qty, maker.qty))
+                fills.append(Fill(maker.id, order.id, price, fill_qty))
+                order.qty = Qty(order.qty - fill_qty)
+                maker.qty = Qty(maker.qty - fill_qty)
+                maker_done = maker.qty == 0
 
-            if maker.qty == 0:
+            if maker_done:
                 level.popleft()
                 del self._orders[maker.id]
             if not level:
                 del opposite[price]
 
         if order.qty == 0:
-            return SubmitResult(fills, Outcome.FILLED)
+            return SubmitResult(fills, Outcome.FILLED, cancels)
         if order.type == OrderType.LIMIT:
             self._rest(order)
-            return SubmitResult(fills, Outcome.RESTED)
-        return SubmitResult(fills, Outcome.CANCELLED)  # MARKET or IOC: drop the remainder.
+            return SubmitResult(fills, Outcome.RESTED, cancels)
+        return SubmitResult(fills, Outcome.CANCELLED, cancels)  # MARKET or IOC.
 
     def cancel(self, order_id: OrderId) -> bool:
         """Remove a resting order. Returns False if no resting order has this id."""

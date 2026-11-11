@@ -86,29 +86,30 @@ class OrderBook:
 
         is_buy = order.side == Side.BUY
         fills: list[Fill] = []
+        cancels: list[OrderId] = []
 
         if order.type == OrderType.POST_ONLY:
             crosses = self._best_ask <= order.price if is_buy else self._best_bid >= order.price
             if crosses:
                 return SubmitResult(fills, Outcome.REJECTED)
             self._rest(order)
-            return SubmitResult(fills, Outcome.RESTED)
+            return SubmitResult(fills, Outcome.RESTED, cancels)
 
         # A market order has no limit: use the far edge of the range, so it can trade at
         # any price in the book.
         if is_buy:
             limit = self.max_tick if is_market else order.price
-            self._take_asks(order, limit, fills)
+            self._take_asks(order, limit, fills, cancels)
         else:
             limit = self.min_tick if is_market else order.price
-            self._take_bids(order, limit, fills)
+            self._take_bids(order, limit, fills, cancels)
 
         if order.qty == 0:
-            return SubmitResult(fills, Outcome.FILLED)
+            return SubmitResult(fills, Outcome.FILLED, cancels)
         if order.type == OrderType.LIMIT:
             self._rest(order)
-            return SubmitResult(fills, Outcome.RESTED)
-        return SubmitResult(fills, Outcome.CANCELLED)  # MARKET or IOC: drop the remainder.
+            return SubmitResult(fills, Outcome.RESTED, cancels)
+        return SubmitResult(fills, Outcome.CANCELLED, cancels)  # MARKET or IOC: drop the remainder.
 
     def cancel(self, order_id: OrderId) -> bool:
         """Remove a resting order. Returns False if no resting order has this id."""
@@ -127,7 +128,9 @@ class OrderBook:
                 self._best_ask = self._next_ask_from(order.price + 1)
         return True
 
-    def _take_asks(self, order: Order, limit: int, fills: list[Fill]) -> None:
+    def _take_asks(
+        self, order: Order, limit: int, fills: list[Fill], cancels: list[OrderId]
+    ) -> None:
         # A buy order: take the lowest asks first, while they are at or below the limit.
         while order.qty > 0 and self._best_ask <= limit:
             price = self._best_ask
@@ -135,19 +138,27 @@ class OrderBook:
             maker = level.head
             assert maker is not None  # The best ask level always has orders.
 
-            fill_qty = Qty(min(order.qty, maker.qty))
-            fills.append(Fill(maker.id, order.id, Price(price), fill_qty))
-            order.qty = Qty(order.qty - fill_qty)
-            maker.qty = Qty(maker.qty - fill_qty)
-            level.qty -= fill_qty
+            if maker.trader == order.trader:
+                # Self-trade prevention: cancel the trader's own resting order, no trade.
+                cancels.append(maker.id)
+                maker_done = True
+            else:
+                fill_qty = Qty(min(order.qty, maker.qty))
+                fills.append(Fill(maker.id, order.id, Price(price), fill_qty))
+                order.qty = Qty(order.qty - fill_qty)
+                maker.qty = Qty(maker.qty - fill_qty)
+                level.qty -= fill_qty
+                maker_done = maker.qty == 0
 
-            if maker.qty == 0:
+            if maker_done:
                 level.remove(maker)
                 del self._orders[maker.id]
                 if level.head is None:
                     self._best_ask = self._next_ask_from(price + 1)
 
-    def _take_bids(self, order: Order, limit: int, fills: list[Fill]) -> None:
+    def _take_bids(
+        self, order: Order, limit: int, fills: list[Fill], cancels: list[OrderId]
+    ) -> None:
         # A sell order: the mirror of _take_asks. Highest bids first, at or above the limit.
         while order.qty > 0 and self._best_bid >= limit:
             price = self._best_bid
@@ -155,13 +166,19 @@ class OrderBook:
             maker = level.head
             assert maker is not None  # The best bid level always has orders.
 
-            fill_qty = Qty(min(order.qty, maker.qty))
-            fills.append(Fill(maker.id, order.id, Price(price), fill_qty))
-            order.qty = Qty(order.qty - fill_qty)
-            maker.qty = Qty(maker.qty - fill_qty)
-            level.qty -= fill_qty
+            if maker.trader == order.trader:
+                # Self-trade prevention: cancel the trader's own resting order, no trade.
+                cancels.append(maker.id)
+                maker_done = True
+            else:
+                fill_qty = Qty(min(order.qty, maker.qty))
+                fills.append(Fill(maker.id, order.id, Price(price), fill_qty))
+                order.qty = Qty(order.qty - fill_qty)
+                maker.qty = Qty(maker.qty - fill_qty)
+                level.qty -= fill_qty
+                maker_done = maker.qty == 0
 
-            if maker.qty == 0:
+            if maker_done:
                 level.remove(maker)
                 del self._orders[maker.id]
                 if level.head is None:
