@@ -70,6 +70,43 @@ class OrderBook:
     def best_ask(self) -> Price | None:
         return Price(self._best_ask) if self._best_ask <= self.max_tick else None
 
+    def depth(self, side: Side) -> list[tuple[Price, Qty]]:
+        """Each price on one side with its total resting quantity, best price first."""
+        if side == Side.BUY:
+            prices = range(self._best_bid, self.min_tick - 1, -1)
+            levels = self._bids
+        else:
+            prices = range(self._best_ask, self.max_tick + 1)
+            levels = self._asks
+        return [(Price(p), Qty(levels[p].qty)) for p in prices if levels[p].head is not None]
+
+    def check_invariants(self) -> None:
+        """Walk every internal structure and raise AssertionError if any is inconsistent.
+
+        For tests only: it visits every tick, so it is far too slow for the matching path.
+        """
+        seen = 0
+        for side, levels in ((Side.BUY, self._bids), (Side.SELL, self._asks)):
+            for price in range(self.min_tick, self.max_tick + 1):
+                level = levels[price]
+                total = 0
+                prev = None
+                node = level.head
+                while node is not None:
+                    _require(node.prev is prev, f"broken prev link at {side.name} {price}")
+                    _require(node.side == side and node.price == price, f"misplaced {node}")
+                    _require(node.qty > 0, f"empty order resting: {node}")
+                    _require(self._orders.get(node.id) is node, f"{node} not in the id map")
+                    total += node.qty
+                    seen += 1
+                    prev, node = node, node.next
+                _require(level.tail is prev, f"wrong tail at {side.name} {price}")
+                _require(level.qty == total, f"level total {level.qty} != {total} at {price}")
+        _require(seen == len(self._orders), "id map holds orders that are not in the book")
+        _require(self._best_bid == self._next_bid_from(self.max_tick), "stale best bid")
+        _require(self._best_ask == self._next_ask_from(self.min_tick), "stale best ask")
+        _require(self._best_bid < self._best_ask, "crossed book: best bid >= best ask")
+
     def submit(self, order: Order) -> SubmitResult:
         """Match an order against the other side, then decide what happens to the rest.
 
@@ -206,3 +243,9 @@ class OrderBook:
         while price >= self.min_tick and self._bids[price].head is None:
             price -= 1
         return price
+
+
+def _require(condition: bool, message: str) -> None:
+    # Not `assert`: Python skips assert statements when it runs with -O.
+    if not condition:
+        raise AssertionError(message)

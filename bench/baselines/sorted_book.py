@@ -30,6 +30,12 @@ class SortedBook:
         price: Price = self.asks.peekitem(0)[0]
         return price
 
+    def depth(self, side: Side) -> list[tuple[Price, Qty]]:
+        """Each price on one side with its total resting quantity, best price first."""
+        # Highest bid first, lowest ask first.
+        items = reversed(self.bids.items()) if side == Side.BUY else iter(self.asks.items())
+        return [(price, Qty(sum(o.qty for o in level))) for price, level in items]
+
     def submit(self, order: Order) -> SubmitResult:
         """Match an order against the other side, then decide what happens to the rest."""
         fills: list[Fill] = []
