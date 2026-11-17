@@ -70,6 +70,9 @@ class OrderBook:
     def best_ask(self) -> Price | None:
         return Price(self._best_ask) if self._best_ask <= self.max_tick else None
 
+    def is_resting(self, order_id: OrderId) -> bool:
+        return order_id in self._orders
+
     def depth(self, side: Side) -> list[tuple[Price, Qty]]:
         """Each price on one side with its total resting quantity, best price first."""
         if side == Side.BUY:

@@ -202,3 +202,42 @@ Interview questions:
 
 - Question: Why does the test keep its own record of each order, when it can compare the two books?
   Answer: Comparison only proves that the two books agree. If both have the same bug, they agree and the test passes. The record does not depend on either book: it adds up fills and cancels from the results and checks that every lot is accounted for. That is a third, independent view.
+
+## 6. Benchmark
+
+What it does: `bench/run_bench.py` sends the same seeded stream of 1,000,000 messages to both books and measures throughput and latency. `bench/workload.py` generates the stream. The results are in `BENCHMARKS.md`.
+
+Key concepts:
+
+- Throughput is messages per second. The benchmark times the whole batch once, with no clock reads inside the loop.
+- Latency is the time for one message. The benchmark reads the clock around each message in a second, separate pass, and records the times in an HDR histogram.
+- Percentiles, not the average. Ten messages that take 2, 2, 2, 3, 3, 3, 3, 4, 4 and 90 µs have an average of 11.6 µs, which describes none of them. The p50 is 3 µs. The p99 is the time that 99% of messages beat, and it shows the slow tail that trading firms care about.
+- The garbage collector is off during timing. A collection pause adds hundreds of microseconds to one message, and that measures Python, not the book.
+
+Results (one laptop core, 1,000,000 messages):
+
+| Engine | Throughput | p50 | p99 | p99.9 |
+| --- | --- | --- | --- | --- |
+| Fast book | 354,153 msg/s | 2.40 µs | 12.01 µs | 42.02 µs |
+| Baseline | 37,752 msg/s | 7.80 µs | 217.73 µs | 755.20 µs |
+
+The fast book meets all three Phase 1 targets: 250,000 msg/s, p50 below 5 µs, p99 below 20 µs.
+
+Decisions:
+
+| Decision | Choice | Why | What I gave up |
+| --- | --- | --- | --- |
+| Test traffic | Seeded generator: 10,000 warm-up orders, then 60% resting limit orders, 35% cancels, 5% IOC orders | Every run sees the same stream, so runs and engines compare fairly. Cancels are where the baseline is slowest. | Real exchange data is more realistic, but we have none. |
+| Measurement | Two passes: one for throughput, one for latency | Clock reads inside the loop slow it down, which distorts throughput. | Each engine runs the stream twice. |
+| CI | A short smoke test, no speed checks | Shared CI machines have unstable timings, so a speed check fails at random. | A slowdown is caught only by running the benchmark by hand. |
+
+Interview questions:
+
+- Question: Why is the fast book about 9 times faster than the baseline?
+  Answer: Mainly cancel. In this workload, the book grows to about 208,000 orders, about 2,200 at each price. The baseline cancel searches the deque at that price, so it does work for every order in front. The fast book finds the order in a dictionary and unlinks it, in the same time for any queue length. The bigger the book, the bigger the gap. The p99 shows it best: 12 µs against 218 µs.
+
+- Question: Why report p99 and not the average?
+  Answer: The average hides the slow messages. A few slow ones raise the average a little, but they are the messages that matter, for example a cancel during a fast market. The p99 says that 99 of 100 messages finish within that time, and the p99.9 and the maximum show the rare worst cases.
+
+- Question: The maximum latency is 11 ms. Is that a bug in the engine?
+  Answer: No. It happens to about one message in a million, and the p99.9 is only 42 µs. On a laptop, the operating system sometimes pauses the process to run other work. The garbage collector is off, so it is not the cause. A server set up for low latency, for example with a reserved CPU core, removes most of these pauses.

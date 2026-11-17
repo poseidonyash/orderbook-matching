@@ -52,5 +52,5 @@ warn_unreachable = true
 
 # sortedcontainers ships no type hints. It is used only by the baseline in bench/.
 [[tool.mypy.overrides]]
-module = ["sortedcontainers"]
+module = ["sortedcontainers", "hdrh.*"]
 ignore_missing_imports = true
