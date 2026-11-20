@@ -241,3 +241,38 @@ Interview questions:
 
 - Question: The maximum latency is 11 ms. Is that a bug in the engine?
   Answer: No. It happens to about one message in a million, and the p99.9 is only 42 µs. On a laptop, the operating system sometimes pauses the process to run other work. The garbage collector is off, so it is not the cause. A server set up for low latency, for example with a reserved CPU core, removes most of these pauses.
+
+## 7. Engine, sequencer and events
+
+What it does: `Engine.process(command)` stamps each command with a sequence number and a timestamp, applies it to the book, and returns the events that it caused. Commands are `NewOrder` and `CancelOrder`. Events are `Accepted`, `Rejected`, `Traded` and `Cancelled`.
+
+Key concepts:
+
+- Event sourcing. The ordered list of events is the full record of the market. The book is only a copy, and the same commands rebuild the same book. Real exchanges use this for crash recovery and audits.
+- The sequencer gives every command a number, so the order of commands is exact, even for two orders that arrive at the same moment.
+- Determinism. The engine never reads the computer's clock. Each command gets its timestamp from the sequencer's simulated clock. A replay next week therefore gives the same events, with the same times.
+
+Worked example: trader 7 rests a sell of 10 at 52 (command 1), and trader 9 rests a sell of 5 at 52 (command 2). Trader 7 then buys 8 at 52 (command 3). Command 3 gives three events, all with seq 3: `Accepted` for order 3, `Cancelled` for order 1 with 10 lots and the reason `SELF_TRADE`, and `Traded` for order 2 against order 3, 5 lots at 52. The last 3 lots of order 3 rest, so no remainder cancel follows.
+
+Decisions:
+
+| Decision | Choice | Why | What I gave up |
+| --- | --- | --- | --- |
+| Event types | `Accepted`, `Rejected`, `Traded`, `Cancelled`, each with a reason where it helps | Enough to rebuild every order's life. Market data can calculate depth changes from them. | No `BookUpdate` event yet. Phase 3 adds it if market data needs it. |
+| Bad commands | The engine turns them into `Rejected` events. The book keeps raising errors. | Bad client input is normal for an exchange, and the record must show it. An error inside the book means a bug in our own code. | Two places check input. |
+| Where the code goes | A new `Engine` class that wraps the book | The book and all its tests stay unchanged. | One extra translation step per message. |
+| Open quantity on a cancel | The engine keeps each live `Order` object and reads its quantity | The book changes the quantity in place, so the engine always knows what is open. | A second map of live orders, next to the book's own. |
+| Event order inside one command | Accepted, self-trade cancels, trades, remainder cancel | Simple and fixed. All the events share one sequence number, so they are one step. | When self-trade cancels and trades interleave across prices, the event order is not the exact loop order. |
+
+Testing note: with a planted bug (a user cancel that reports one lot too many), both the cancel test and the Hypothesis accounting test failed.
+
+Interview questions:
+
+- Question: Why does the engine use a simulated clock, never the computer's clock?
+  Answer: To make replay exact. With the real clock, the same commands give different timestamps on every run, so a replay cannot match the original. With the sequencer's clock, the timestamp is part of the command's record. In the simulation, it also lets the market run faster than real time.
+
+- Question: Why does a bad price become a `Rejected` event at the engine, while the book raises an error?
+  Answer: The engine is the edge where client orders arrive, and clients send bad orders every day. That is a normal event, and the record must show that the order arrived and why it was refused. The book sits behind the engine and only receives checked orders. A bad price there means a bug in our own code, and an error makes that bug loud.
+
+- Question: What does "the book is only a copy" mean?
+  Answer: The commands and events are the source of truth. The book is a result that I can calculate from them at any time, by running the same commands through a fresh engine. If the process crashes, nothing is lost as long as the record survives.
