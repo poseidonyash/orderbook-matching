@@ -3,7 +3,6 @@
 Each side of the book is a SortedDict from price to a deque of orders, oldest first. The
 fast engine in obm.engine is benchmarked against this book and must give the same fills.
 """
-# testing price
 
 from collections import deque
 
